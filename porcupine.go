@@ -51,17 +51,13 @@ func New(modelPath string, keywords ...*Keyword) (Porcupine, error) {
 		return nil, errors.New("expected at least one keyword")
 	}
 
-	if len(keywords) == 1 {
-		return NewSingleKeywordHandle(modelPath, keywords[0])
-	}
-
 	return NewMultipleKeywordHandle(modelPath, keywords...)
 }
 
 // handle holds an initialized Porcupine object
 type handle struct {
 	once sync.Once
-	h    *C.struct_pv_porcupine_object
+	h    *C.struct_pv_porcupine
 }
 
 // Close releases the Porcupine object
@@ -77,45 +73,6 @@ type Keyword struct {
 	Value       string
 	FilePath    string
 	Sensitivity float32
-}
-
-// SingleKeywordHandle represents an initialized Porcupine instance able to handle a single keyword
-type SingleKeywordHandle struct {
-	*handle
-	kw *Keyword
-}
-
-// NewSingleKeywordHandle creates a Porcupine instance for working with a single keyword
-func NewSingleKeywordHandle(modelFilePath string, keyword *Keyword) (*SingleKeywordHandle, error) {
-	var h *C.struct_pv_porcupine_object
-	mf := C.CString(modelFilePath)
-	kf := C.CString(keyword.FilePath)
-
-	defer func() {
-		C.free(unsafe.Pointer(mf))
-		C.free(unsafe.Pointer(kf))
-	}()
-
-	status := C.pv_porcupine_init(mf, kf, C.float(keyword.Sensitivity), &h)
-	if err := checkStatus(status); err != nil {
-		return nil, err
-	}
-
-	return &SingleKeywordHandle{
-		handle: &handle{h: h},
-		kw:     keyword,
-	}, nil
-}
-
-// Process checks the provided audio frame and returns the word if it was detected
-func (s *SingleKeywordHandle) Process(data []int16) (string, error) {
-	var result C.bool
-	status := C.pv_porcupine_process(s.handle.h, (*C.int16_t)(unsafe.Pointer(&data[0])), &result)
-	if err := checkStatus(status); err != nil || bool(result) == false {
-		return "", err
-	}
-
-	return s.kw.Value, nil
 }
 
 // MultipleKeywordHandle represents an initialized Porcupine instance able to handle multiple keywords
@@ -152,8 +109,8 @@ func NewMultipleKeywordHandle(modelFilePath string, keywords ...*Keyword) (*Mult
 		C.free(unsafe.Pointer(mf))
 	}()
 
-	var h *C.struct_pv_porcupine_object
-	status := C.pv_porcupine_multiple_keywords_init(mf, numKeywords, (**C.char)(unsafe.Pointer(cKeywords)), (*C.float)(unsafe.Pointer(&tmpGoSensitivities[0])), &h)
+	var h *C.struct_pv_porcupine
+	status := C.pv_porcupine_init(mf, numKeywords, (**C.char)(unsafe.Pointer(cKeywords)), (*C.float)(unsafe.Pointer(&tmpGoSensitivities[0])), &h)
 	if err := checkStatus(status); err != nil {
 		return nil, err
 	}
@@ -168,7 +125,7 @@ func NewMultipleKeywordHandle(modelFilePath string, keywords ...*Keyword) (*Mult
 // If no keyword is detected, returns -1
 func (s *MultipleKeywordHandle) Process(data []int16) (string, error) {
 	var kwIndex C.int
-	status := C.pv_porcupine_multiple_keywords_process(s.handle.h, (*C.int16_t)(unsafe.Pointer(&data[0])), &kwIndex)
+	status := C.pv_porcupine_process(s.handle.h, (*C.int16_t)(unsafe.Pointer(&data[0])), &kwIndex)
 	idx := int(kwIndex)
 	if err := checkStatus(status); err != nil || idx < 0 || idx >= len(s.kw) {
 		return "", err
